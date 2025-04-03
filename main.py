@@ -8,21 +8,6 @@
 # author: Ti Bai
 # Email: tibaiw@gmail.com
 # datetime:4/2/2025
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-# author: Ti Bai
-# Email: tibaiw@gmail.com
-# datetime:4/2/2025
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-# author: Ti Bai
-# Email: tibaiw@gmail.com
-# datetime:4/2/2025
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-# author: Ti Bai
-# Email: tibaiw@gmail.com
-# datetime:4/2/2025
 import os
 from pathlib import Path
 import io
@@ -109,8 +94,7 @@ def transform_volume_for_view(vol, view):
       - coronal: rotate the x-z plane by 90° counterclockwise and flip left-right (axes=(0,2))
     """
     if view == "axial":
-        # Axial: transform entire volume along x-y plane, then flip vertically.
-        return np.flip(np.rot90(vol, k=1, axes=(0,1)), axis=0)
+        return np.flip(np.rot90(vol, k=1, axes=(0, 1)), axis=0)
     elif view == "sagittal":
         return np.rot90(vol, k=1, axes=(1, 2))
     elif view == "coronal":
@@ -144,16 +128,21 @@ def crop_to_union(image_vol, dose_vol, structures):
     return image_crop, dose_crop, structures_crop, slices
 
 
+# --- Minimal change in resample_volume ---
 def resample_volume(volume, original_spacing, target_spacing, order=1):
     """
     Resample a 3D volume to isotropic resolution.
+    If the x and y resolutions are already at the target, only interpolate along z.
     """
     zoom_factors = [orig / target_spacing for orig in original_spacing]
+    if np.allclose(zoom_factors[0:2], [1, 1], atol=1e-3):
+        zoom_factors[0] = 1.0
+        zoom_factors[1] = 1.0
     return zoom(volume, zoom=zoom_factors, order=order)
 
 
 @st.cache_data(show_spinner=False)
-def preprocess_data(folder_path):
+def preprocess_data(folder_path, target_resolution):
     """
     Load, crop, resample, and pre-transform the volumes for all views.
     Returns:
@@ -165,13 +154,13 @@ def preprocess_data(folder_path):
     image_vol, image_spacing, dose_vol, dose_spacing, structures = load_nifti_data(folder_path)
     image_vol, dose_vol, structures, crop_slices = crop_to_union(image_vol, dose_vol, structures)
 
-    # Choose target resolution: larger of max(image_spacing) and 2 mm.
-    target_spacing = max(max(image_spacing), 2.0)
+    # Use the user-selected target resolution.
+    target_spacing = target_resolution
 
     # Resample volumes
-    image_resampled = resample_volume(image_vol, image_spacing, target_spacing, order=1)
+    image_resampled = resample_volume(image_vol, image_spacing, target_spacing, order=0)
     if dose_vol is not None and dose_spacing is not None:
-        dose_resampled = resample_volume(dose_vol, dose_spacing, target_spacing, order=1)
+        dose_resampled = resample_volume(dose_vol, dose_spacing, target_spacing, order=0)
     else:
         dose_resampled = None
     structures_resampled = {}
@@ -244,7 +233,22 @@ def composite_slice_to_pil(base_slice, window_min, window_max, dose_slice=None, 
 # --- Sidebar: load and adjust parameters ---
 if folder_path:
     try:
-        image_views, dose_views, structure_views, target_spacing = preprocess_data(folder_path)
+        # Load metadata only to determine image spacing.
+        _, image_spacing, _, _, _ = load_nifti_data(folder_path)
+        min_spacing = min(image_spacing)
+    except Exception as e:
+        st.sidebar.error(f"Error loading metadata: {e}")
+        st.stop()
+
+    # Resolution slider: range is from the smallest spacing to 3mm, default is 2mm (or min_spacing if min_spacing > 2)
+    default_resolution = 2.0 if min_spacing <= 2.0 else min_spacing
+    resolution_slider = st.sidebar.slider("Target Resolution (mm)", min_value=float(min_spacing), max_value=3.0,
+                                          value=float(default_resolution), step=0.1)
+
+# --- Main: Preprocess data and display views ---
+if folder_path:
+    try:
+        image_views, dose_views, structure_views, target_spacing = preprocess_data(folder_path, resolution_slider)
     except Exception as e:
         st.sidebar.error(f"Error processing data: {e}")
         st.stop()
@@ -286,6 +290,9 @@ if folder_path:
     else:
         show_dose = False
         dose_params = None
+
+    # Global structure overlay toggle: if unchecked, hide all overlays.
+    show_all_structures = st.sidebar.checkbox("Show All Structure Overlays", value=True)
 
     # Structure overlays: list available structures with colorized labels.
     structure_keys = sorted(structure_views.keys())
@@ -332,9 +339,10 @@ if folder_path:
         coronal_index = st.session_state.get("coronal_slider", ny_cor // 2)
         cross_coords_axial = (sagittal_index, ny_cor - coronal_index)
         struct_slices = {}
-        for key in structure_keys:
-            if mask_visibility.get(key, False):
-                struct_slices[key] = structure_views[key]["axial"][:, :, axial_index]
+        if show_all_structures:
+            for key in structure_keys:
+                if mask_visibility.get(key, False):
+                    struct_slices[key] = structure_views[key]["axial"][:, :, axial_index]
         pil_img = composite_slice_to_pil(base_slice, window_min, window_max,
                                          dose_slice=dose_slice, dose_params=dose_params,
                                          structure_slices=struct_slices, structure_colors=structure_colors,
@@ -354,9 +362,10 @@ if folder_path:
         coronal_index_for_sag = st.session_state.get("coronal_slider", ny_cor // 2)
         cross_coords_sagittal = (ny_cor - coronal_index_for_sag, nz_axial - axial_index_for_sag)
         struct_slices = {}
-        for key in structure_keys:
-            if mask_visibility.get(key, False):
-                struct_slices[key] = structure_views[key]["sagittal"][sagittal_index, :, :]
+        if show_all_structures:
+            for key in structure_keys:
+                if mask_visibility.get(key, False):
+                    struct_slices[key] = structure_views[key]["sagittal"][sagittal_index, :, :]
         pil_img = composite_slice_to_pil(base_slice, window_min, window_max,
                                          dose_slice=dose_slice, dose_params=dose_params,
                                          structure_slices=struct_slices, structure_colors=structure_colors,
@@ -376,9 +385,10 @@ if folder_path:
         axial_index_for_cor = st.session_state.get("axial_slider", nz_axial // 2)
         cross_coords_coronal = (sagittal_index_for_cor, nz_axial - axial_index_for_cor)
         struct_slices = {}
-        for key in structure_keys:
-            if mask_visibility.get(key, False):
-                struct_slices[key] = structure_views[key]["coronal"][:, coronal_index, :]
+        if show_all_structures:
+            for key in structure_keys:
+                if mask_visibility.get(key, False):
+                    struct_slices[key] = structure_views[key]["coronal"][:, coronal_index, :]
         pil_img = composite_slice_to_pil(base_slice, window_min, window_max,
                                          dose_slice=dose_slice, dose_params=dose_params,
                                          structure_slices=struct_slices, structure_colors=structure_colors,
