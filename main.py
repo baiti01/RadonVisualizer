@@ -3,6 +3,26 @@
 # author: Ti Bai
 # Email: tibaiw@gmail.com
 # datetime:4/2/2025
+# !/usr/bin/env python
+# -*- coding:utf-8 -*-
+# author: Ti Bai
+# Email: tibaiw@gmail.com
+# datetime:4/2/2025
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+# author: Ti Bai
+# Email: tibaiw@gmail.com
+# datetime:4/2/2025
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+# author: Ti Bai
+# Email: tibaiw@gmail.com
+# datetime:4/2/2025
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+# author: Ti Bai
+# Email: tibaiw@gmail.com
+# datetime:4/2/2025
 import os
 from pathlib import Path
 import io
@@ -89,14 +109,11 @@ def transform_volume_for_view(vol, view):
       - coronal: rotate the x-z plane by 90° counterclockwise and flip left-right (axes=(0,2))
     """
     if view == "axial":
-        # Axial: transform entire volume along x-y plane.
+        # Axial: transform entire volume along x-y plane, then flip vertically.
         return np.flip(np.rot90(vol, k=1, axes=(0,1)), axis=0)
-        #return np.rot90(vol, k=1, axes=(0, 1))
     elif view == "sagittal":
-        # Sagittal: each slice is originally vol[sagittal_index, :, :], so apply rotation on (1,2)
         return np.rot90(vol, k=1, axes=(1, 2))
     elif view == "coronal":
-        # Coronal: originally vol[:, coronal_index, :]; rotate on (0,2) then flip horizontally.
         return np.fliplr(np.rot90(vol, k=1, axes=(0, 2)))
     else:
         return vol
@@ -188,24 +205,14 @@ def preprocess_data(folder_path):
     return image_views, dose_views, structure_views, target_spacing
 
 
-# The following orientation functions are now superseded by pre-transformed volumes.
-# They are kept here for reference.
-#
-# def orient_axial(slice_img):
-#     return np.rot90(slice_img, k=-1)
-#
-# def orient_coronal(slice_img):
-#     return np.fliplr(np.rot90(slice_img, k=1))
-#
-# def orient_sagittal(slice_img):
-#     return np.rot90(slice_img, k=1)
-
-# --- Composite slice display via PIL (unchanged) ---
+# --- Composite slice display via PIL with cross-lines ---
 def composite_slice_to_pil(base_slice, window_min, window_max, dose_slice=None, dose_params=None, structure_slices=None,
-                           structure_colors=None):
+                           structure_colors=None, cross_lines=False, cross_coords=(None, None)):
     """
     Render a composite slice (base image with optional dose and structure overlays) and return a PIL Image.
     The image is created with a 1:1 mapping (each voxel becomes one pixel).
+    Optionally, if cross_lines is True and cross_coords is provided (tuple of (x,y) coordinates),
+    dashed yellow lines are drawn at those positions.
     """
     height, width = base_slice.shape
     dpi = 100
@@ -222,6 +229,9 @@ def composite_slice_to_pil(base_slice, window_min, window_max, dose_slice=None, 
             if np.any(mask):
                 color = structure_colors.get(name, "#00FF00")
                 ax.contour(mask, levels=[0.5], colors=[color], origin="lower", linewidths=1.5)
+    if cross_lines and cross_coords[0] is not None and cross_coords[1] is not None:
+        ax.axvline(x=cross_coords[0], color='yellow', linestyle='--')
+        ax.axhline(y=cross_coords[1], color='yellow', linestyle='--')
     ax.axis("off")
     plt.tight_layout(pad=0)
     buf = io.BytesIO()
@@ -304,6 +314,11 @@ if folder_path:
     nx_sag, ny_sag, nz_sag = image_views["sagittal"].shape  # sagittal view: shape (nx, ny, nz)
     nx_cor, ny_cor, nz_cor = image_views["coronal"].shape  # coronal view: shape (nx, ny, nz)
 
+    # For crosslines, we assume:
+    # - In the axial view, a vertical line indicates the sagittal slice position and a horizontal line indicates the coronal slice.
+    # - In the sagittal view, a vertical line indicates the coronal slice position and a horizontal line indicates the axial slice.
+    # - In the coronal view, a vertical line indicates the sagittal slice position and a horizontal line indicates the axial slice.
+
     # Axial: slice along third dimension.
     with col_axial:
         st.subheader("Axial")
@@ -312,13 +327,18 @@ if folder_path:
         dose_slice = None
         if show_dose and dose_views is not None:
             dose_slice = dose_views["axial"][:, :, axial_index]
+        # Cross-lines: vertical at sagittal slider, horizontal at coronal slider.
+        sagittal_index = st.session_state.get("sagittal_slider", nx_sag // 2)
+        coronal_index = st.session_state.get("coronal_slider", ny_cor // 2)
+        cross_coords_axial = (sagittal_index, ny_cor - coronal_index)
         struct_slices = {}
         for key in structure_keys:
             if mask_visibility.get(key, False):
                 struct_slices[key] = structure_views[key]["axial"][:, :, axial_index]
         pil_img = composite_slice_to_pil(base_slice, window_min, window_max,
                                          dose_slice=dose_slice, dose_params=dose_params,
-                                         structure_slices=struct_slices, structure_colors=structure_colors)
+                                         structure_slices=struct_slices, structure_colors=structure_colors,
+                                         cross_lines=True, cross_coords=cross_coords_axial)
         st.image(pil_img, use_column_width=False)
 
     # Sagittal: slice along first dimension.
@@ -329,13 +349,18 @@ if folder_path:
         dose_slice = None
         if show_dose and dose_views is not None:
             dose_slice = dose_views["sagittal"][sagittal_index, :, :]
+        # Cross-lines: vertical at coronal slider, horizontal at axial slider.
+        axial_index_for_sag = st.session_state.get("axial_slider", nz_axial // 2)
+        coronal_index_for_sag = st.session_state.get("coronal_slider", ny_cor // 2)
+        cross_coords_sagittal = (ny_cor - coronal_index_for_sag, nz_axial - axial_index_for_sag)
         struct_slices = {}
         for key in structure_keys:
             if mask_visibility.get(key, False):
                 struct_slices[key] = structure_views[key]["sagittal"][sagittal_index, :, :]
         pil_img = composite_slice_to_pil(base_slice, window_min, window_max,
                                          dose_slice=dose_slice, dose_params=dose_params,
-                                         structure_slices=struct_slices, structure_colors=structure_colors)
+                                         structure_slices=struct_slices, structure_colors=structure_colors,
+                                         cross_lines=True, cross_coords=cross_coords_sagittal)
         st.image(pil_img, use_column_width=False)
 
     # Coronal: slice along second dimension.
@@ -346,11 +371,16 @@ if folder_path:
         dose_slice = None
         if show_dose and dose_views is not None:
             dose_slice = dose_views["coronal"][:, coronal_index, :]
+        # Cross-lines: vertical at sagittal slider, horizontal at axial slider.
+        sagittal_index_for_cor = st.session_state.get("sagittal_slider", nx_sag // 2)
+        axial_index_for_cor = st.session_state.get("axial_slider", nz_axial // 2)
+        cross_coords_coronal = (sagittal_index_for_cor, nz_axial - axial_index_for_cor)
         struct_slices = {}
         for key in structure_keys:
             if mask_visibility.get(key, False):
                 struct_slices[key] = structure_views[key]["coronal"][:, coronal_index, :]
         pil_img = composite_slice_to_pil(base_slice, window_min, window_max,
                                          dose_slice=dose_slice, dose_params=dose_params,
-                                         structure_slices=struct_slices, structure_colors=structure_colors)
+                                         structure_slices=struct_slices, structure_colors=structure_colors,
+                                         cross_lines=True, cross_coords=cross_coords_coronal)
         st.image(pil_img, use_column_width=False)
