@@ -4,6 +4,8 @@ A simple, interactive Streamlit app for visualizing 3D medical images (CT/MRI) i
 [Largely AI-based coding]
 ---
 
+![Diagram](assets/GUI.png)
+
 ## ✅ Supported Features
 
 - **Dynamic Resolution**
