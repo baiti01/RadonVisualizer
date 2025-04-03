@@ -3,11 +3,6 @@
 # author: Ti Bai
 # Email: tibaiw@gmail.com
 # datetime:4/2/2025
-#!/usr/bin/env python
-# -*- coding:utf-8 -*-
-# author: Ti Bai
-# Email: tibaiw@gmail.com
-# datetime:4/2/2025
 import os
 from pathlib import Path
 import io
